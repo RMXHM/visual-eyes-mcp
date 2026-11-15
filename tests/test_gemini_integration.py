@@ -2,15 +2,19 @@
 
 This test makes **real, billable API calls** and is skipped unless both gates pass:
 
-    export GEMINI_API_KEY=...                 # read from the environment only
-    export VISUAL_EYES_RUN_INTEGRATION=1      # explicit second opt-in
+1. A non-blank ``GEMINI_API_KEY`` in the process environment or the project-root
+   ``.env`` file (copy ``.env.example`` to ``.env``; existing environment values
+   win).
+2. ``VISUAL_EYES_RUN_INTEGRATION=1`` in the process environment. This flag is
+   read before ``.env`` is loaded, so a local ``.env`` cannot turn an ordinary
+   test run into a paid call.
 
-Never put the key in a config file, a test file, or shell history that is shared.
-The key is never printed, logged, or included in assertions. Expected spend: at
-most two generation interactions against a one-second local test video, using
-``detail="low"``. The initial call may be followed by one structured-output
-re-ask, and provider-level transient retries are disabled for this test. Token
-usage is printed without any credential material; no dollar estimate is made.
+The key is never printed, logged, or included in assertions. The project-root
+``.env`` is ignored by Git. Expected spend: at most two generation interactions
+against a one-second local test video, using ``detail="low"``. The initial call
+may be followed by one structured-output re-ask, and provider-level transient
+retries are disabled for this test. Token usage is printed without any
+credential material; no dollar estimate is made.
 
 Run it yourself with:
 
@@ -33,13 +37,22 @@ import pytest
 
 from visual_eyes_mcp.analysis import AnalysisService
 from visual_eyes_mcp.cache import Cache
-from visual_eyes_mcp.config import load_settings
+from visual_eyes_mcp.config import load_project_env, load_settings
 from visual_eyes_mcp.gemini import GeminiProvider
 from visual_eyes_mcp.media import probe
 from visual_eyes_mcp.sources import parse_source
 
 _RUN = os.environ.get("VISUAL_EYES_RUN_INTEGRATION") == "1"
-_HAS_KEY = bool(os.environ.get("GEMINI_API_KEY", "").strip())
+
+
+def _has_key() -> bool:
+    """Load .env only for an opted-in run, then check the key gate."""
+
+    if not _RUN:
+        return False
+    load_project_env()
+    return bool(os.environ.get("GEMINI_API_KEY", "").strip())
+
 
 pytestmark = [
     pytest.mark.integration,
@@ -48,8 +61,8 @@ pytestmark = [
         reason="set VISUAL_EYES_RUN_INTEGRATION=1 to allow a real API call",
     ),
     pytest.mark.skipif(
-        not (_HAS_KEY),
-        reason="GEMINI_API_KEY is not set (do not put it in a file)",
+        not _has_key(),
+        reason="GEMINI_API_KEY is not set in the environment or project .env",
     ),
     pytest.mark.skipif(
         not (shutil.which("ffmpeg") and shutil.which("ffprobe")),

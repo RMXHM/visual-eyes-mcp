@@ -1,9 +1,10 @@
 """Configuration loading.
 
-Precedence is environment > TOML > built-in defaults. The TOML file is optional;
-when absent, defaults apply and no quota is configured. Secrets are read from the
-environment only, and the loader rejects a TOML file that appears to contain key
-material.
+Precedence is environment > TOML > built-in defaults. The project-root ``.env``
+is loaded into the environment first, without replacing values that are already
+set. The TOML file is optional; when absent, defaults apply and no quota is
+configured. Secrets are read from the environment only, and the loader rejects a
+TOML file that appears to contain key material.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import logging
 import os
 import re
 import tomllib
-from collections.abc import Mapping
+from collections.abc import Mapping, MutableMapping
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,9 @@ _SECRET_KEYS = {
 }
 _GOOGLE_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{30,}")
 _ENV_PREFIX = "VISUAL_EYES_"
+_ENV_KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+_PROJECT_ENV_PATH = _PROJECT_ROOT / ".env"
 
 _TRUE = {"1", "true", "yes", "on"}
 _FALSE = {"0", "false", "no", "off"}
@@ -355,10 +359,78 @@ def _read_toml(path: Path) -> dict[str, Any]:
         raise ConfigError(f"cannot read {path}: {exc.strerror or exc}") from exc
 
 
+def _env_value(raw: str) -> str:
+    """Parse one .env value without evaluating shell syntax."""
+
+    value = raw.strip()
+    if value[:1] in {"'", '"'}:
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end != -1:
+            return value[1:end]
+    comment = re.search(r"\s+#", value)
+    if comment:
+        value = value[: comment.start()].rstrip()
+    return value
+
+
+def _read_env_file(path: Path) -> dict[str, str]:
+    """Read a small, conventional KEY=VALUE .env file.
+
+    Values are never included in errors or logs. Both ``KEY=value`` and
+    ``export KEY=value`` are accepted, as are blank lines, comments, and
+    single- or double-quoted values.
+    """
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as exc:
+        raise ConfigError(f"cannot read {path}: {exc.strerror or exc}") from exc
+
+    values: dict[str, str] = {}
+    for line_number, raw_line in enumerate(lines, start=1):
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("export "):
+            line = line[7:].lstrip()
+        key, separator, raw_value = line.partition("=")
+        key = key.strip()
+        if not separator or not _ENV_KEY_RE.fullmatch(key):
+            raise ConfigError(
+                f"invalid .env entry on line {line_number} of {path}",
+                hint="expected KEY=VALUE",
+            )
+        values[key] = _env_value(raw_value)
+    return values
+
+
+def load_project_env(
+    path: Path | None = None,
+    env: MutableMapping[str, str] | None = None,
+) -> bool:
+    """Load the project-root .env file without overriding existing values.
+
+    Returns ``True`` when a file was loaded. The function is intentionally
+    silent so credential values cannot reach logs or error output.
+    """
+
+    env_path = _PROJECT_ENV_PATH if path is None else path
+    if not env_path.is_file():
+        return False
+
+    target = os.environ if env is None else env
+    for key, value in _read_env_file(env_path).items():
+        target.setdefault(key, value)
+    return True
+
+
 def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     """Load, merge, and validate configuration."""
 
-    env = os.environ if env is None else env
+    if env is None:
+        load_project_env()
+        env = os.environ
     config_path = _resolve_config_path(env)
 
     raw: dict[str, Any] = _read_toml(config_path) if config_path else {}

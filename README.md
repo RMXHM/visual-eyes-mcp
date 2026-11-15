@@ -77,17 +77,25 @@ ffprobe -version
 
 ## Configuration
 
-Visual Eyes MCP reads its Gemini API key from the process environment.
+Visual Eyes MCP reads its Gemini API key from the process environment and from
+the project-root `.env` file. Copy the placeholder file once, then edit it:
 
 ```bash
-export GEMINI_API_KEY="your-api-key"
+cp .env.example .env
+# edit .env and replace the placeholder key
 ```
 
-`GOOGLE_API_KEY` is also supported as a fallback when `GEMINI_API_KEY` is not set.
+The server and integration test load `.env` automatically, so you do not need to
+`export` the key for local development. Variables already present in the shell
+take precedence over values in `.env`.
+
+`GOOGLE_API_KEY` is also supported as a fallback when `GEMINI_API_KEY` is unset or
+blank. `GEMINI_API_KEY` remains the first choice.
 
 **Security notes:**
 - Never commit API keys or other credentials.
-- Keep local secrets in an ignored `.env` file or your environment.
+- Keep local secrets in the ignored `.env` file or your environment.
+- `.env` is ignored by Git; `.env.example` contains placeholders only.
 - API keys are not accepted through the TOML configuration file.
 - Logs and provider errors are designed to redact credential material.
 
@@ -115,16 +123,17 @@ A separate integration test exercises the real Gemini provider.
 
 It requires two explicit opt-ins:
 
-1. A valid `GEMINI_API_KEY` in the process environment.
-2. `VISUAL_EYES_RUN_INTEGRATION=1`.
+1. A non-blank `GEMINI_API_KEY` in the process environment or project-root `.env`.
+2. `VISUAL_EYES_RUN_INTEGRATION=1` in the process environment.
+
+The key is loaded automatically from `.env` if you have not exported it. The run
+flag is read before `.env` is loaded, so a local `.env` cannot accidentally turn
+an ordinary test run into a paid call.
 
 Run it with:
 
 ```bash
-export GEMINI_API_KEY="your-api-key"
-export VISUAL_EYES_RUN_INTEGRATION=1
-
-uv run pytest tests/test_gemini_integration.py -m integration -q -s
+VISUAL_EYES_RUN_INTEGRATION=1 uv run pytest tests/test_gemini_integration.py -m integration -q -s
 ```
 
 The test creates a short local video and makes at most two Gemini generation requests. Provider-level transient retries are disabled for this test.
