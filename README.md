@@ -1,59 +1,187 @@
-# visual-eyes-mcp
+# Visual Eyes MCP
 
-An MCP server that lets an AI agent understand video and look at specific frames.
+**Give AI agents the ability to see, understand, and search through videos.**
 
-Work in progress. No release has been published.
+Visual Eyes MCP is a Python-based [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server that connects AI agents to video understanding capabilities powered by Google's Gemini API.
 
-- Local video files inside explicitly allowed directories
-- Public YouTube URLs (no downloading)
-- Whole-video or time-range questions, with approximate timestamps
-- Natural-language moment search
-- Local frame extraction for on-screen text
-- SQLite cache and quota-aware preflight
-- Requires `ffmpeg`/`ffprobe` on `PATH`
+It allows compatible AI clients to ask questions about videos, find specific moments, and inspect individual frames without manually watching the entire recording.
 
-License: pending (to be decided before public release).
+> **Status:** Work in progress. The project is under active development. No stable release is available yet.
 
-See `ARCHITECTURE.md`, `MVP.md`, `TECHNICAL_DECISIONS.md`, and `ROADMAP.md` for the design.
+## Features
 
-## Authentication
+- **Video understanding:** Ask natural-language questions about an entire video.
+- **Timestamped answers:** Get approximate timestamps for relevant moments.
+- **Moment search:** Find scenes or events using natural-language descriptions.
+- **Time-range analysis:** Focus questions on a specific section of a video.
+- **Local video support:** Analyze videos stored in explicitly allowed directories.
+- **YouTube support:** Analyze publicly accessible YouTube videos without downloading them.
+- **Frame extraction:** Extract local frames for closer inspection, including on-screen text.
+- **SQLite caching:** Reuse cached analysis results and reduce unnecessary API requests.
+- **Quota-aware requests:** Check usage limits before sending requests to Gemini.
 
-The Gemini API key is read **only** from the process environment:
+## How It Works
 
-```sh
-export GEMINI_API_KEY="..."   # your shell; do not commit or paste this into a file
-uv run visual-eyes-mcp
+Visual Eyes MCP acts as a bridge between an MCP-compatible AI client and Google's Gemini API.
+
+```text
+You
+ │
+ ▼
+AI Client
+ │
+ ▼
+Visual Eyes MCP Server
+ │
+ ├── Video source validation
+ ├── Cache and quota checks
+ ├── FFmpeg / FFprobe
+ ├── Gemini API
+ └── Timestamped results
+ │
+ ▼
+AI Client
 ```
 
-`GOOGLE_API_KEY` is accepted as a fallback when `GEMINI_API_KEY` is unset. A TOML
-file that looks like it contains key material is rejected at startup, and the
-startup log line reports only `api_key_present=True/False`. Log output and provider
-error messages redact the key and key-shaped strings.
+The server handles video validation, processing, caching, and communication with Gemini, then returns structured results to the AI client.
 
-## Tests
+## Requirements
 
-Unit and service tests use a fake provider; they never read a real key and never
-make network calls:
+- Python 3.11 or newer
+- [uv](https://docs.astral.sh/uv/)
+- FFmpeg and FFprobe
+- A Google Gemini API key
+- An MCP-compatible client
 
-```sh
+## Installation
+
+Clone the repository:
+
+```bash
+git clone https://github.com/RMXHM/visual-eyes-mcp.git
+cd visual-eyes-mcp
+```
+
+Install dependencies:
+
+```bash
+uv sync
+```
+
+Make sure FFmpeg and FFprobe are available on your system:
+
+```bash
+ffmpeg -version
+ffprobe -version
+```
+
+## Configuration
+
+Visual Eyes MCP reads its Gemini API key from the process environment.
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+```
+
+`GOOGLE_API_KEY` is also supported as a fallback when `GEMINI_API_KEY` is not set.
+
+**Security notes:**
+- Never commit API keys or other credentials.
+- Keep local secrets in an ignored `.env` file or your environment.
+- API keys are not accepted through the TOML configuration file.
+- Logs and provider errors are designed to redact credential material.
+
+Additional settings can be configured through the project's TOML configuration and environment overrides. See [ARCHITECTURE.md](ARCHITECTURE.md) and [TECHNICAL_DECISIONS.md](TECHNICAL_DECISIONS.md).
+
+## Development
+
+Run the test suite:
+
+```bash
 uv run pytest
 ```
 
-The real-provider test is marked `integration` and is skipped unless you opt in
-twice — a key in the environment **and** an explicit flag:
+Run lint checks:
 
-```sh
-export GEMINI_API_KEY="..."            # already set in your shell
-export VISUAL_EYES_RUN_INTEGRATION=1   # second, explicit opt-in
+```bash
+uv run ruff check src tests
+```
+
+The ordinary test suite uses fake providers and does not make real Gemini API calls.
+
+### Gemini integration test
+
+A separate integration test exercises the real Gemini provider.
+
+It requires two explicit opt-ins:
+
+1. A valid `GEMINI_API_KEY` in the process environment.
+2. `VISUAL_EYES_RUN_INTEGRATION=1`.
+
+Run it with:
+
+```bash
+export GEMINI_API_KEY="your-api-key"
+export VISUAL_EYES_RUN_INTEGRATION=1
+
 uv run pytest tests/test_gemini_integration.py -m integration -q -s
 ```
 
-That test generates a one-second local test video and makes at most two
-generation requests (`detail="low"`): the initial call plus at most one
-structured-output re-ask. Provider-level transient retries are disabled for this
-test, so the request budget is predictable. It prints token usage without any
-credential material but does not estimate cost in dollars. Do not run it until
-you have approved the expected spend for your account and model.
-`VISUAL_EYES_INTEGRATION_MODEL` overrides the model if the default tier is not
-available to your key.
+The test creates a short local video and makes at most two Gemini generation requests. Provider-level transient retries are disabled for this test.
 
+Files API upload and polling requests are separate from generation requests. Actual API usage may incur charges depending on your Gemini account and model.
+
+The integration model can be overridden using `VISUAL_EYES_INTEGRATION_MODEL`.
+
+## Project Structure
+
+```text
+visual-eyes-mcp/
+├── src/
+│   └── visual_eyes_mcp/
+│       ├── analysis.py
+│       ├── cache.py
+│       ├── config.py
+│       ├── errors.py
+│       ├── gemini.py
+│       ├── media.py
+│       ├── models.py
+│       ├── prompts.py
+│       ├── server.py
+│       ├── sources.py
+│       └── tools.py
+├── tests/
+├── ARCHITECTURE.md
+├── MVP.md
+├── ROADMAP.md
+├── TECHNICAL_DECISIONS.md
+├── pyproject.toml
+└── uv.lock
+```
+
+## Roadmap
+
+Visual Eyes MCP is still evolving. Planned work and technical decisions are documented in:
+
+- [MVP.md](MVP.md)
+- [ROADMAP.md](ROADMAP.md)
+- [ARCHITECTURE.md](ARCHITECTURE.md)
+- [TECHNICAL_DECISIONS.md](TECHNICAL_DECISIONS.md)
+
+## Contributing
+
+Contributions, bug reports, and suggestions are welcome, subject to the project's license.
+
+Please open an issue before starting significant changes so proposed work can be discussed.
+
+## License
+
+This project is licensed under the **PolyForm Noncommercial License 1.0.0**.
+
+You may use, study, modify, and share the software for noncommercial purposes under the license terms. Commercial use requires separate permission from the copyright holder.
+
+See [LICENSE](LICENSE) for the complete terms.
+
+---
+
+**Built by [RMXHM](https://github.com/RMXHM)**
