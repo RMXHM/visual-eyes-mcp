@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import math
+import threading
 from typing import Any, Protocol, TypeVar
 
 from pydantic import BaseModel, ValidationError
@@ -45,10 +46,22 @@ class VideoProvider(Protocol):
 
 
 class AnalysisService:
-    def __init__(self, settings: Settings, cache: Cache, provider: VideoProvider) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        cache: Cache,
+        provider: VideoProvider,
+        *,
+        call_slots: threading.BoundedSemaphore | None = None,
+    ) -> None:
         self.settings = settings
         self.cache = cache
         self.provider = provider
+        self.call_slots = (
+            call_slots
+            if call_slots is not None
+            else threading.BoundedSemaphore(settings.limits.max_concurrent_calls)
+        )
 
     # -- public operations ----------------------------------------------
 
@@ -292,28 +305,29 @@ class AnalysisService:
     def _paid_json(
         self, request: ProviderRequest, payload_model: type[PayloadT], estimated: int
     ) -> tuple[PayloadT, Usage]:
-        first = self._call_provider(request, estimated)
-        try:
-            return payload_model.model_validate(_parse_json(first.text)), first.usage
-        except (ValueError, ValidationError) as exc:
-            summary = _validation_summary(exc)
-            retry_request = request.model_copy(
-                update={
-                    "prompt": request.prompt
-                    + "\n\nYour previous response was not valid JSON matching the schema ("
-                    + summary
-                    + "). Return only valid JSON."
-                }
-            )
-            second = self._call_provider(retry_request, estimated)
+        with self.call_slots:
+            first = self._call_provider(request, estimated)
             try:
-                payload = payload_model.model_validate(_parse_json(second.text))
-            except (ValueError, ValidationError) as retry_exc:
-                raise ProviderError(
-                    "the model returned invalid structured output twice",
-                    hint=_validation_summary(retry_exc),
-                ) from retry_exc
-            return payload, _add_usage(first.usage, second.usage)
+                return payload_model.model_validate(_parse_json(first.text)), first.usage
+            except (ValueError, ValidationError) as exc:
+                summary = _validation_summary(exc)
+                retry_request = request.model_copy(
+                    update={
+                        "prompt": request.prompt
+                        + "\n\nYour previous response was not valid JSON matching the schema ("
+                        + summary
+                        + "). Return only valid JSON."
+                    }
+                )
+                second = self._call_provider(retry_request, estimated)
+                try:
+                    payload = payload_model.model_validate(_parse_json(second.text))
+                except (ValueError, ValidationError) as retry_exc:
+                    raise ProviderError(
+                        "the model returned invalid structured output twice",
+                        hint=_validation_summary(retry_exc),
+                    ) from retry_exc
+                return payload, _add_usage(first.usage, second.usage)
 
     def _call_provider(self, request: ProviderRequest, estimated: int) -> ProviderResult:
         quota = self.settings.quota_for(request.model)

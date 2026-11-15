@@ -39,6 +39,16 @@ class App:
     cache: Cache
     provider: VideoProvider | None = None
     _provider_lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
+    _call_slots: threading.BoundedSemaphore = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._call_slots = threading.BoundedSemaphore(
+            self.settings.limits.max_concurrent_calls
+        )
+
+    @property
+    def call_slots(self) -> threading.BoundedSemaphore:
+        return self._call_slots
 
     @classmethod
     def from_settings(cls, settings: Settings) -> App:
@@ -69,7 +79,12 @@ class App:
             return self.provider
 
     def service(self) -> AnalysisService:
-        return AnalysisService(self.settings, self.cache, self.get_provider())
+        return AnalysisService(
+            self.settings,
+            self.cache,
+            self.get_provider(),
+            call_slots=self.call_slots,
+        )
 
 
 def video_info(app: App, source: str) -> VideoInfo:
@@ -139,7 +154,12 @@ def analyze_video(
 
     provider = app.get_provider()
     ref, media = _prepare_source(app, source, require_uploadable=True)
-    service = AnalysisService(app.settings, app.cache, provider)
+    service = AnalysisService(
+        app.settings,
+        app.cache,
+        provider,
+        call_slots=app.call_slots,
+    )
     return service.analyze_video(
         source=ref,
         media=media,
@@ -172,7 +192,12 @@ def find_moments(
 
     provider = app.get_provider()
     ref, media = _prepare_source(app, source, require_uploadable=True)
-    service = AnalysisService(app.settings, app.cache, provider)
+    service = AnalysisService(
+        app.settings,
+        app.cache,
+        provider,
+        call_slots=app.call_slots,
+    )
     return service.find_moments(
         source=ref,
         media=media,
